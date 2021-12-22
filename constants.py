@@ -5,7 +5,12 @@ import variables as var
 
 default_lang_dict = {}
 lang_dict = {}
-
+BUFFER = 0.1
+BITRATE = 48000
+RESOLUTION = 10 # in ms
+FLOAT_RESOLUTION = float(RESOLUTION) / 1000
+MONO_CHUNK_SIZE = BITRATE * 2 * RESOLUTION / 1000
+STEREO_CHUNK_SIZE = MONO_CHUNK_SIZE * 2 
 
 def load_lang(lang):
     global lang_dict, default_lang_dict

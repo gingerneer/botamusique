@@ -25,10 +25,15 @@ import util
 import command
 import constants
 import media.playlist
+import audiowebsocket
 from constants import tr_cli as tr
 from database import SettingsDatabase, MusicDatabase, DatabaseMigration
 from media.item import ValidationFailedError, PreparationFailedError
 from media.cache import MusicCache
+from constants import BUFFER as BUFFER
+from constants import FLOAT_RESOLUTION as FLOAT_RESOLUTION
+from constants import STEREO_CHUNK_SIZE as STEREO_CHUNK_SIZE
+from audiowebsocket import *
 
 
 class MumbleBot:
@@ -113,6 +118,11 @@ class MumbleBot:
         else:
             self.bandwidth = var.config.getint("bot", "bandwidth")
 
+        if args.vosk:
+            self.vosk_server = args.vosk
+        else:
+            self.vosk_server = var.config.get("vosk", "uri")
+
         self.mumble = pymumble.Mumble(host, user=self.username, port=port, password=password, tokens=tokens,
                                       stereo=self.stereo,
                                       debug=var.config.getboolean('debug', 'mumbleConnection'),
@@ -122,6 +132,7 @@ class MumbleBot:
         self.mumble.set_codec_profile("audio")
         self.mumble.start()  # start the mumble thread
         self.mumble.is_ready()  # wait for the connection
+        self.audio_websocket = None
 
         if self.mumble.connected >= pymumble.constants.PYMUMBLE_CONN_STATE_FAILED:
             exit()
@@ -478,6 +489,7 @@ class MumbleBot:
 
     # Main loop of the Bot
     def loop(self):
+        silent = "\x00" * STEREO_CHUNK_SIZE
         while not self.exit and self.mumble.is_alive():
 
             while self.thread and self.mumble.sound_output.get_buffer_size() > 0.5 and not self.exit:
@@ -580,6 +592,48 @@ class MumbleBot:
                             self._loop_status = 'Wait for the next item to be ready'
                     else:
                         self.wait_for_ready = False
+
+        #handle recording to pipe to audio parser
+        if not self.audio_websocket:
+            self.mumble.set_receive_sound(True)
+            self.mumble.users.myself.recording()
+            self.cursor_time = time.time() - BUFFER
+            self.audio_websocket = AudioWebSocketManager(self.vosk_server)
+        if self.cursor_time < time.time() - BUFFER:
+            base_sound = None
+            for user in self.mumble.users.values():
+                session = user["session"]
+                while ( user.sound.is_sound() and
+                                user.sound.first_sound().time < self.cursor_time):
+                            user.sound.get_sound(FLOAT_RESOLUTION)  # forget about too old sounds
+                        
+                if user.sound.is_sound():
+                    
+                        
+                    if ( user.sound.first_sound().time >= self.cursor_time and
+                        user.sound.first_sound().time < self.cursor_time + FLOAT_RESOLUTION ):
+                        # available sound is to be treated now and not later
+                        sound = user.sound.get_sound(FLOAT_RESOLUTION)
+                            
+
+                        if sound.target == 0:  # take care of the stereo feature
+                            stereo_pcm = audioop.tostereo(sound.pcm, 2, *self.users[session]["stereo"])
+                        else:
+                            stereo_pcm = audioop.tostereo(sound.pcm, 2, 1, 1)
+                        if base_sound == None:
+                            base_sound = stereo_pcm 
+                        else:
+                            #base_sound = audioop.add(base_sound, sound.pcm, 2)
+                            base_sound = self.add_sound(base_sound, stereo_pcm)
+                
+
+            if base_sound:
+                    self.audio_websocket.write(user["name"], base_sound)
+            else:
+                self.audio_websocket.write(user["name"], silent)
+            self.cursor_time += FLOAT_RESOLUTION
+        else:
+            time.sleep(FLOAT_RESOLUTION)
 
         while self.mumble.sound_output.get_buffer_size() > 0 and self.mumble.is_alive():
             # Empty the buffer before exit
@@ -780,6 +834,8 @@ if __name__ == '__main__':
                         type=str, default=None, help="Certificate file")
     parser.add_argument("-b", "--bandwidth", dest="bandwidth",
                         type=int, help="Bandwidth used by the bot")
+    parser.add_argument("-v", "--vosk", dest="vosk", 
+                        type=str, help="URL for Vosk Server")
 
     args = parser.parse_args()
 

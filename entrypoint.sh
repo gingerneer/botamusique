@@ -49,6 +49,10 @@ if [ -n "$BAM_BANDWIDTH" ]; then
     command+=( "--bandwidth" "$BAM_BANDWIDTH")
 fi
 
+if [ -n "$BAM_VOSK_SERVER" ]; then
+    command+=( "--vosk" "$BAM_VOSK_SERVER")
+fi
+
 if [ -n "$BAM_CONFIG_file" ]; then
     if [ ! -f "$BAM_CONFIG_file" ]; then
         cp "/botamusique/configuration.example.ini" "$BAM_CONFIG_file"

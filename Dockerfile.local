@@ -46,6 +46,7 @@ RUN apt-get update \
 COPY --from=python-builder /botamusique .
 COPY --from=node-builder /botamusique/static static
 COPY --from=template-builder /botamusique/templates templates
+COPY configuration.ini configuration.ini
 RUN chmod +x entrypoint.sh
 ENTRYPOINT [ "/botamusique/entrypoint.sh" ]
 CMD ["/botamusique/venv/bin/python", "/botamusique/mumbleBot.py"]

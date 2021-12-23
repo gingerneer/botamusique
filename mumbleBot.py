@@ -180,7 +180,7 @@ class MumbleBot:
         assert var.config.get("bot", "when_nobody_in_channel") in ['pause', 'pause_resume', 'stop', 'nothing', ''], \
             "Unknown action for when_nobody_in_channel"
 
-        if var.config.get("bot", "when_nobody_in_channel", fallback='') in ['pause', 'pause_resume', 'stop']:
+        if var.config.get("bot", "when_nobody_in_channel", fallback='') in ['pause', 'pause_resume', 'stop'] or self.vosk_server:
             user_change_callback = \
                 lambda user, action: threading.Thread(target=self.users_changed,
                                                       args=(user, action), daemon=True).start()
@@ -377,6 +377,10 @@ class MumbleBot:
         return len(own_channel.get_users())
 
     def users_changed(self, user, message):
+        if self.vosk_server:
+            if not user["name"] in self.mumble.users:
+                if self.audio_websocket:
+                    self.audio_websocket.close(user["name"])
         # only check if there is one more user currently in the channel
         # else when the music is paused and somebody joins, music would start playing again
         user_count = self.get_user_count_in_channel()

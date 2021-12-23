@@ -10,7 +10,6 @@ class AudioWebSocket():
     Pipes Audio to the Vosk server
     """
     def __init__(self, username, vosk_server, data):
-        print("creating new websocket wrapper for "+username)
         self.username = username
         self.vosk_server = vosk_server
         self.audio_queue = asyncio.Queue()
@@ -26,10 +25,10 @@ class AudioWebSocket():
             async with websockets.connect(self.vosk_server) as websocket:
                 await websocket.send('{ "config" : { "sample_rate" : %d } }' % (48000))
                 await websocket.send(data)
-                self.log.info(self.username+" says: ")
-                self.log.info(await websocket.recv())
+                self.log.debug(self.username+" says: ")
+                self.log.debug(await websocket.recv())
                 await websocket.send('{"eof" : 1}')
-                self.log.info(await websocket.recv())
+                self.log.debug(await websocket.recv())
                 return
         except socket.gaierror as e:
             self.log.error("received socket error: %s", e)
@@ -37,6 +36,8 @@ class AudioWebSocket():
         except ConnectionRefusedError as e:
             self.log.error("received connection refused error: %s", e)
             time.sleep(5.0)
+
+_sentinel = object()
 
 class AudioWebSocketQueue:
     def __init__(self, username, vosk_server, queue):
@@ -56,6 +57,9 @@ class AudioWebSocketQueue:
             try:
                 while True:
                     data = await asyncio.wait_for(self.audio_queue.get(), timeout=1.0)
+                    if data is _sentinel:
+                        self.log.debug(f"completed loop for user: {self.username}")
+                        return
                     buffer.extend(data)
             except asyncio.TimeoutError:
                 self.log.debug(f"timeout on {self.username} queue, checking buffer length to send to websocket.")
@@ -70,8 +74,10 @@ class AudioWebSocketManager:
     def __init__(self, vosk_server):
         self.vosk_server = vosk_server
         self.queues = {}
+        self.lock = threading.Lock()
 
     def write(self, username, data):
+        self.lock.acquire()
         if not username in self.queues:
             aq = AudioWebSocketQueue(username, self.vosk_server, asyncio.Queue())
             self.queues[username] = aq
@@ -79,4 +85,15 @@ class AudioWebSocketManager:
         else:
             aq = self.queues[username]
             aq.audio_queue.put_nowait(data)
-            
+        self.lock.release()
+
+    def close(self, username):
+        self.lock.acquire()
+        if not username in self.queues:
+            self.lock.release()
+            return
+        aq = self.queues[username]
+        aq.audio_queue.put_nowait(_sentinel)
+        del self.queues[username]
+        self.lock.release()
+

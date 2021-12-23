@@ -171,6 +171,11 @@ class MumbleBot:
             self.mumble.callbacks.set_callback(pymumble.constants.PYMUMBLE_CLBK_SOUNDRECEIVED,
                                                self.ducking_sound_received)
             self.mumble.set_receive_sound(True)
+        
+        if len(self.vosk_server) > 0:
+            self.mumble.callbacks.set_callback(pymumble.constants.PYMUMBLE_CLBK_SOUNDRECEIVED,
+                                               self.ducking_sound_received)
+            self.mumble.set_receive_sound(True)
 
         assert var.config.get("bot", "when_nobody_in_channel") in ['pause', 'pause_resume', 'stop', 'nothing', ''], \
             "Unknown action for when_nobody_in_channel"
@@ -489,14 +494,12 @@ class MumbleBot:
 
     # Main loop of the Bot
     def loop(self):
-        silent = "\x00" * STEREO_CHUNK_SIZE
         while not self.exit and self.mumble.is_alive():
-
             while self.thread and self.mumble.sound_output.get_buffer_size() > 0.5 and not self.exit:
                 # If the buffer isn't empty, I cannot send new music part, so I wait
                 self._loop_status = f'Wait for buffer {self.mumble.sound_output.get_buffer_size():.3f}'
                 time.sleep(0.01)
-
+            
             raw_music = None
             if self.thread:
                 # I get raw from ffmpeg thread
@@ -593,47 +596,7 @@ class MumbleBot:
                     else:
                         self.wait_for_ready = False
 
-        #handle recording to pipe to audio parser
-        if not self.audio_websocket:
-            self.mumble.set_receive_sound(True)
-            self.mumble.users.myself.recording()
-            self.cursor_time = time.time() - BUFFER
-            self.audio_websocket = AudioWebSocketManager(self.vosk_server)
-        if self.cursor_time < time.time() - BUFFER:
-            base_sound = None
-            for user in self.mumble.users.values():
-                session = user["session"]
-                while ( user.sound.is_sound() and
-                                user.sound.first_sound().time < self.cursor_time):
-                            user.sound.get_sound(FLOAT_RESOLUTION)  # forget about too old sounds
-                        
-                if user.sound.is_sound():
-                    
-                        
-                    if ( user.sound.first_sound().time >= self.cursor_time and
-                        user.sound.first_sound().time < self.cursor_time + FLOAT_RESOLUTION ):
-                        # available sound is to be treated now and not later
-                        sound = user.sound.get_sound(FLOAT_RESOLUTION)
-                            
-
-                        if sound.target == 0:  # take care of the stereo feature
-                            stereo_pcm = audioop.tostereo(sound.pcm, 2, *self.users[session]["stereo"])
-                        else:
-                            stereo_pcm = audioop.tostereo(sound.pcm, 2, 1, 1)
-                        if base_sound == None:
-                            base_sound = stereo_pcm 
-                        else:
-                            #base_sound = audioop.add(base_sound, sound.pcm, 2)
-                            base_sound = self.add_sound(base_sound, stereo_pcm)
-                
-
-            if base_sound:
-                    self.audio_websocket.write(user["name"], base_sound)
-            else:
-                self.audio_websocket.write(user["name"], silent)
-            self.cursor_time += FLOAT_RESOLUTION
-        else:
-            time.sleep(FLOAT_RESOLUTION)
+        
 
         while self.mumble.sound_output.get_buffer_size() > 0 and self.mumble.is_alive():
             # Empty the buffer before exit
@@ -666,20 +629,28 @@ class MumbleBot:
             self.last_volume_cycle_time = time.time()
 
     def ducking_sound_received(self, user, sound):
-        rms = audioop.rms(sound.pcm, 2)
-        self._max_rms = max(rms, self._max_rms)
-        if self._display_rms:
-            if rms < self.ducking_threshold:
-                print('%6d/%6d  ' % (rms, self._max_rms) + '-' * int(rms / 200), end='\r')
-            else:
-                print('%6d/%6d  ' % (rms, self._max_rms) + '-' * int(self.ducking_threshold / 200)
-                      + '+' * int((rms - self.ducking_threshold) / 200), end='\r')
+        if self.is_ducking:
+            rms = audioop.rms(sound.pcm, 2)
+            self._max_rms = max(rms, self._max_rms)
+            if self._display_rms:
+                if rms < self.ducking_threshold:
+                    print('%6d/%6d  ' % (rms, self._max_rms) + '-' * int(rms / 200), end='\r')
+                else:
+                    print('%6d/%6d  ' % (rms, self._max_rms) + '-' * int(self.ducking_threshold / 200)
+                        + '+' * int((rms - self.ducking_threshold) / 200), end='\r')
 
-        if rms > self.ducking_threshold:
-            if self.on_ducking is False:
-                self.log.debug("bot: ducking triggered")
-                self.on_ducking = True
-            self.ducking_release = time.time() + 1  # ducking release after 1s
+            if rms > self.ducking_threshold:
+                if self.on_ducking is False:
+                    self.log.debug("bot: ducking triggered")
+                    self.on_ducking = True
+                self.ducking_release = time.time() + 1  # ducking release after 1s
+
+        if len(self.vosk_server) > 0:
+            #handle recording to pipe to audio parser
+            if not self.audio_websocket:
+                self.audio_websocket = AudioWebSocketManager(self.vosk_server)
+            self.audio_websocket.write(user["name"], sound.pcm)
+
 
     def _fadeout(self, _pcm_data, stereo=False, fadein=False):
         pcm_data = bytearray(_pcm_data)
@@ -834,7 +805,7 @@ if __name__ == '__main__':
                         type=str, default=None, help="Certificate file")
     parser.add_argument("-b", "--bandwidth", dest="bandwidth",
                         type=int, help="Bandwidth used by the bot")
-    parser.add_argument("-v", "--vosk", dest="vosk", 
+    parser.add_argument("-k", "--vosk", dest="vosk", 
                         type=str, help="URL for Vosk Server")
 
     args = parser.parse_args()

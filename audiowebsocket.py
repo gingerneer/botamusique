@@ -4,6 +4,7 @@ import logging
 import time
 import socket
 import threading
+import json
 
 class AudioWebSocket():
     """
@@ -23,11 +24,15 @@ class AudioWebSocket():
     async def pipe(self, data):
         try:
             async with websockets.connect(self.vosk_server) as websocket:
-                await websocket.send('{ "config" : { "sample_rate" : %d } }' % (48000))
+                configObject = {
+                    "username":self.username,
+                    "config":{
+                        "sample_rate":48000
+                    }
+                }
+                await websocket.send(json.dumps(configObject))
                 await websocket.send(data)
                 self.log.debug(self.username+" says: ")
-                self.log.debug(await websocket.recv())
-                await websocket.send('{"eof" : 1}')
                 self.log.debug(await websocket.recv())
                 return
         except socket.gaierror as e:

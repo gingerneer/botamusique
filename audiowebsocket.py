@@ -6,6 +6,9 @@ import socket
 import threading
 import json
 
+end_of_file_signal = '{"eof" : 1}'
+max_buffer_size = 1000
+
 class AudioWebSocket():
     """
     Pipes Audio to the Vosk server
@@ -31,9 +34,14 @@ class AudioWebSocket():
                     }
                 }
                 await websocket.send(json.dumps(configObject))
-                await websocket.send(data)
-                self.log.debug(self.username+" says: ")
-                self.log.debug(await websocket.recv())
+
+                data_offset = 0
+                while data_offset < len(data):
+                    end_point = min(max_buffer_size+data_offset, len(data))
+                    await websocket.send(data[data_offset:end_point])
+                    data_offset = end_point
+                
+                await websocket.send(end_of_file_signal)
                 return
         except socket.gaierror as e:
             self.log.error("received socket error: %s", e)

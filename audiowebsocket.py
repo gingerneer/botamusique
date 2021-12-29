@@ -38,10 +38,11 @@ class AudioWebSocket():
                 data_offset = 0
                 while data_offset < len(data):
                     end_point = min(max_buffer_size+data_offset, len(data))
-                    await websocket.send(data[data_offset:end_point])
+                    await websocket.send(bytes(data[data_offset:end_point]))
                     data_offset = end_point
                 
-                await websocket.send(end_of_file_signal)
+                await websocket.send(str.encode(end_of_file_signal))
+                self.result = await websocket.recv()
                 return
         except socket.gaierror as e:
             self.log.error("received socket error: %s", e)
